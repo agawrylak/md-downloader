@@ -127,6 +127,7 @@ func listMdFiles(repo string) {
 					if err != nil {
 						log.Errorf("Failed to send request: %s\n", err)
 						history.Files[item.Path] = "ERROR"
+						saveHistory(history)
 						continue
 					}
 					defer resp.Body.Close()
@@ -137,16 +138,22 @@ func listMdFiles(repo string) {
 					if err := json.NewDecoder(resp.Body).Decode(&fileContentResponse); err != nil {
 						log.Errorf("Failed to decode response JSON: %s\n", err)
 						history.Files[item.Path] = "ERROR"
+						saveHistory(history)
 						continue
 					}
 					decodedContent, err := base64.StdEncoding.DecodeString(fileContentResponse.Content)
 					if err != nil {
 						log.Errorf("Failed to decode base64 content: %s\n", err)
 						history.Files[item.Path] = "ERROR"
+						saveHistory(history)
 						continue
 					}
 
-					saveFile(repo, item.Path, string(decodedContent))
+					if err := saveFile(repo, item.Path, string(decodedContent)); err != nil {
+						history.Files[item.Path] = item.Sha
+						saveHistory(history)
+						continue
+					}
 					history.Files[item.Path] = item.Sha
 				}
 			} else {
@@ -158,30 +165,31 @@ func listMdFiles(repo string) {
 	saveHistory(history)
 }
 
-func saveFile(repo, filePath, content string) {
+func saveFile(repo, filePath, content string) error {
 	fileDir := filepath.Join(cfg.Output, filepath.Base(repo)) // Use only the repository name, skip the username
-	err := os.MkdirAll(fileDir, os.ModePerm)
-	if err != nil {
-		log.Errorf("Failed to create directory: %s\n", fileDir)
-		return
-	}
-
 	filePath = filepath.Join(fileDir, filePath)
+
+	err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
+	if err != nil {
+		log.Errorf("Failed to create directory: %s\n", filePath)
+		return err
+	}
 
 	out, err := os.Create(filePath)
 	if err != nil {
 		log.Errorf("Failed to create file: %s\n", filePath)
-		return
+		return err
 	}
 	defer out.Close()
 
 	_, err = out.WriteString(content)
 	if err != nil {
 		log.Errorf("Failed to save file: %s\n", filePath)
-		return
+		return err
 	}
 
 	log.Infof("File downloaded: %s\n", filePath)
+	return nil
 }
 
 func shouldDownload(filePath, sha string, history History) bool {
