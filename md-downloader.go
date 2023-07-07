@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -27,8 +28,14 @@ type History struct {
 
 var cfg Config
 var ignore []string
+var log *logrus.Logger
 
 func main() {
+	log = logrus.New()
+	log.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
+
 	var rootCmd = &cobra.Command{
 		Use:   "md-reader",
 		Short: "MD Reader is a tool for downloading .md files from repositories",
@@ -55,7 +62,7 @@ func parseIgnorePaths() {
 	for _, i := range ignore {
 		split := strings.SplitN(i, ":", 2)
 		if len(split) < 2 {
-			fmt.Printf("Invalid ignore path: %s\n", i)
+			log.Errorf("Invalid ignore path: %s\n", i)
 			continue
 		}
 		repo := split[0]
@@ -75,18 +82,18 @@ func listMdFiles(repo string) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
+		log.Errorf("Failed to send request: %s\n", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println(err)
+		log.Errorf("Failed to read response body: %s\n", err)
 		return
 	}
 	bodyString := string(bodyBytes)
-	fmt.Println(bodyString)
+	log.Debugf("Response body: %s\n", bodyString)
 
 	var contents struct {
 		Tree []struct {
@@ -100,7 +107,7 @@ func listMdFiles(repo string) {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&contents); err != nil {
-		fmt.Println(err)
+		log.Errorf("Failed to decode response JSON: %s\n", err)
 		return
 	}
 
@@ -110,15 +117,15 @@ func listMdFiles(repo string) {
 		if item.Type == "blob" && filepath.Ext(item.Path) == ".md" {
 			if shouldDownload(item.Path, item.Sha, history) {
 				if isIgnored(repo, item.Path) {
-					fmt.Printf("Ignoring file: %s\n", item.Path)
+					log.Infof("Ignoring file: %s\n", item.Path)
 				} else {
-					fmt.Printf("Downloading file: %s\n", item.Path)
+					log.Infof("Downloading file: %s\n", item.Path)
 					downloadURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/master/%s", repo, item.Path)
 					downloadFile(repo, item.Path, downloadURL)
 					history.Files[item.Path] = item.Sha
 				}
 			} else {
-				fmt.Printf("Skipping file: %s (already up to date)\n", item.Path)
+				log.Infof("Skipping file: %s (already up to date)\n", item.Path)
 			}
 		}
 	}
@@ -149,7 +156,7 @@ func downloadFile(repo, filePath, downloadURL string) {
 	fileDir := filepath.Join(cfg.Output, filepath.Base(repo)) // Use only the repository name, skip the username
 	err := os.MkdirAll(fileDir, os.ModePerm)
 	if err != nil {
-		fmt.Printf("Failed to create directory: %s\n", fileDir)
+		log.Errorf("Failed to create directory: %s\n", fileDir)
 		return
 	}
 
@@ -157,25 +164,25 @@ func downloadFile(repo, filePath, downloadURL string) {
 
 	resp, err := http.Get(downloadURL)
 	if err != nil {
-		fmt.Printf("Failed to download file: %s\n", filePath)
+		log.Errorf("Failed to download file: %s\n", filePath)
 		return
 	}
 	defer resp.Body.Close()
 
 	out, err := os.Create(filePath)
 	if err != nil {
-		fmt.Printf("Failed to create file: %s\n", filePath)
+		log.Errorf("Failed to create file: %s\n", filePath)
 		return
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		fmt.Printf("Failed to save file: %s\n", filePath)
+		log.Errorf("Failed to save file: %s\n", filePath)
 		return
 	}
 
-	fmt.Printf("File downloaded: %s\n", filePath)
+	log.Infof("File downloaded: %s\n", filePath)
 }
 
 func loadHistory() History {
@@ -185,13 +192,14 @@ func loadHistory() History {
 
 	file, err := os.Open(cfg.History)
 	if err != nil {
+		log.Warnf("Failed to open history file: %s\n", err)
 		return history
 	}
 	defer file.Close()
 
 	err = json.NewDecoder(file).Decode(&history)
 	if err != nil {
-		fmt.Printf("Failed to parse history file: %s\n", cfg.History)
+		log.Warnf("Failed to parse history file: %s\n", cfg.History)
 	}
 
 	return history
@@ -200,7 +208,7 @@ func loadHistory() History {
 func saveHistory(history History) {
 	file, err := os.Create(cfg.History)
 	if err != nil {
-		fmt.Printf("Failed to create history file: %s\n", cfg.History)
+		log.Errorf("Failed to create history file: %s\n", cfg.History)
 		return
 	}
 	defer file.Close()
@@ -209,6 +217,6 @@ func saveHistory(history History) {
 	encoder.SetIndent("", "    ")
 	err = encoder.Encode(history)
 	if err != nil {
-		fmt.Printf("Failed to save history file: %s\n", cfg.History)
+		log.Errorf("Failed to save history file: %s\n", cfg.History)
 	}
 }
