@@ -106,7 +106,7 @@ func listMdFiles(repo string) {
 		} `json:"tree"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&contents); err != nil {
+	if err := json.Unmarshal(bodyBytes, &contents); err != nil {
 		log.Errorf("Failed to decode response JSON: %s\n", err)
 		return
 	}
