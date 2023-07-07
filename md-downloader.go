@@ -1,4 +1,4 @@
-package md_downloader
+package main
 
 import (
 	"encoding/json"
