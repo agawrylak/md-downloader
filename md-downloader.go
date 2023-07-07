@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -120,8 +120,33 @@ func listMdFiles(repo string) {
 					log.Infof("Ignoring file: %s\n", item.Path)
 				} else {
 					log.Infof("Downloading file: %s\n", item.Path)
-					downloadURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/master/%s", repo, item.Path)
-					downloadFile(repo, item.Path, downloadURL)
+					// Get the file content through GitHub API
+					req, _ = http.NewRequest("GET", item.Url, nil)
+					req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
+					resp, err := client.Do(req)
+					if err != nil {
+						log.Errorf("Failed to send request: %s\n", err)
+						history.Files[item.Path] = "ERROR"
+						continue
+					}
+					defer resp.Body.Close()
+
+					var fileContentResponse struct {
+						Content string `json:"content"`
+					}
+					if err := json.NewDecoder(resp.Body).Decode(&fileContentResponse); err != nil {
+						log.Errorf("Failed to decode response JSON: %s\n", err)
+						history.Files[item.Path] = "ERROR"
+						continue
+					}
+					decodedContent, err := base64.StdEncoding.DecodeString(fileContentResponse.Content)
+					if err != nil {
+						log.Errorf("Failed to decode base64 content: %s\n", err)
+						history.Files[item.Path] = "ERROR"
+						continue
+					}
+
+					saveFile(repo, item.Path, string(decodedContent))
 					history.Files[item.Path] = item.Sha
 				}
 			} else {
@@ -133,8 +158,34 @@ func listMdFiles(repo string) {
 	saveHistory(history)
 }
 
+func saveFile(repo, filePath, content string) {
+	fileDir := filepath.Join(cfg.Output, filepath.Base(repo)) // Use only the repository name, skip the username
+	err := os.MkdirAll(fileDir, os.ModePerm)
+	if err != nil {
+		log.Errorf("Failed to create directory: %s\n", fileDir)
+		return
+	}
+
+	filePath = filepath.Join(fileDir, filePath)
+
+	out, err := os.Create(filePath)
+	if err != nil {
+		log.Errorf("Failed to create file: %s\n", filePath)
+		return
+	}
+	defer out.Close()
+
+	_, err = out.WriteString(content)
+	if err != nil {
+		log.Errorf("Failed to save file: %s\n", filePath)
+		return
+	}
+
+	log.Infof("File downloaded: %s\n", filePath)
+}
+
 func shouldDownload(filePath, sha string, history History) bool {
-	if _, ok := history.Files[filePath]; !ok {
+	if lastSha, ok := history.Files[filePath]; !ok || lastSha == "ERROR" {
 		return true
 	}
 
@@ -150,39 +201,6 @@ func isIgnored(repo, filePath string) bool {
 		}
 	}
 	return false
-}
-
-func downloadFile(repo, filePath, downloadURL string) {
-	fileDir := filepath.Join(cfg.Output, filepath.Base(repo)) // Use only the repository name, skip the username
-	err := os.MkdirAll(fileDir, os.ModePerm)
-	if err != nil {
-		log.Errorf("Failed to create directory: %s\n", fileDir)
-		return
-	}
-
-	filePath = filepath.Join(fileDir, filePath)
-
-	resp, err := http.Get(downloadURL)
-	if err != nil {
-		log.Errorf("Failed to download file: %s\n", filePath)
-		return
-	}
-	defer resp.Body.Close()
-
-	out, err := os.Create(filePath)
-	if err != nil {
-		log.Errorf("Failed to create file: %s\n", filePath)
-		return
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		log.Errorf("Failed to save file: %s\n", filePath)
-		return
-	}
-
-	log.Infof("File downloaded: %s\n", filePath)
 }
 
 func loadHistory() History {
