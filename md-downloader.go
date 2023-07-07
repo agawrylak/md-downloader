@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -78,6 +79,14 @@ func listMdFiles(repo string) {
 		return
 	}
 	defer resp.Body.Close()
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	bodyString := string(bodyBytes)
+	fmt.Println(bodyString)
 
 	var contents struct {
 		Tree []struct {
